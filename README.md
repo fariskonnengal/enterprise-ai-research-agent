@@ -40,7 +40,7 @@ Streamlit UI  ──────►  FastAPI Backend
 pip install -r requirements.txt
 
 # 2. Set your Groq API key
-cp .env.example .env
+cp .env .env
 # edit .env and add your key from console.groq.com
 
 # 3. Run the backend (Terminal 1)
@@ -82,6 +82,5 @@ start asking questions.
 
 ## Deployment
 
-Deploy the FastAPI backend to Render (same approach as the Plant Disease
-Detection API), and the Streamlit app either alongside it or on Streamlit
+Deploy the FastAPI backend to Render,the Streamlit app either alongside it or on Streamlit
 Community Cloud, pointing `API_URL` in `ui.py` to your deployed backend.
