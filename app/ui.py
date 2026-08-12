@@ -8,7 +8,7 @@ grounded answer plus which sources/chunks were used.
 import streamlit as st
 import requests
 
-API_URL = "http://localhost:8000"  # change this to your deployed backend URL
+API_URL = "https://enterprise-ai-research-agent-qlpf.onrender.com"  # change this to your deployed backend URL
 
 st.set_page_config(page_title="Enterprise AI Research Agent", page_icon="🔎", layout="wide")
 
