@@ -2,32 +2,40 @@
 embeddings.py
 Converts text chunks into vector embeddings and manages a FAISS index
 for fast similarity search.
+
+Uses fastembed (ONNX Runtime based) instead of sentence-transformers
+(PyTorch based) to keep memory usage low enough for free-tier hosting
+like Render's 512MB plan.
 """
 
 import faiss
 import numpy as np
 import pickle
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from app.ingestion import Chunk
 
-# all-MiniLM-L6-v2: small (80MB), fast, and good enough quality for
-# most retrieval tasks. Runs on CPU with no GPU needed.
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+# BAAI/bge-small-en-v1.5: small, fast, ONNX-based embedding model.
+# Comparable quality to all-MiniLM-L6-v2, much lighter to run.
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
 class VectorStore:
     def __init__(self):
-        self.model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        self.model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
         self.index = None          # FAISS index (holds the vectors)
         self.chunks: list[Chunk] = []  # parallel list: chunks[i] matches vector i
+
+    def _embed(self, texts: list[str]) -> np.ndarray:
+        """Helper: runs fastembed and returns a proper float32 NumPy array."""
+        embeddings = list(self.model.embed(texts))
+        return np.array(embeddings, dtype="float32")
 
     def build_index(self, chunks: list[Chunk]):
         """Embeds all chunks and builds a searchable FAISS index from scratch."""
         self.chunks = chunks
         texts = [c.text for c in chunks]
 
-        embeddings = self.model.encode(texts, show_progress_bar=False)
-        embeddings = np.array(embeddings, dtype="float32")
+        embeddings = self._embed(texts)
 
         # Normalize vectors so inner product = cosine similarity
         faiss.normalize_L2(embeddings)
@@ -43,8 +51,7 @@ class VectorStore:
             return
 
         texts = [c.text for c in chunks]
-        embeddings = self.model.encode(texts, show_progress_bar=False)
-        embeddings = np.array(embeddings, dtype="float32")
+        embeddings = self._embed(texts)
         faiss.normalize_L2(embeddings)
 
         self.index.add(embeddings)
@@ -58,8 +65,7 @@ class VectorStore:
         if self.index is None or len(self.chunks) == 0:
             return []
 
-        query_vec = self.model.encode([query])
-        query_vec = np.array(query_vec, dtype="float32")
+        query_vec = self._embed([query])
         faiss.normalize_L2(query_vec)
 
         scores, indices = self.index.search(query_vec, top_k)
