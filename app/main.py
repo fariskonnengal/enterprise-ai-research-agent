@@ -8,6 +8,7 @@ FastAPI backend exposing three endpoints:
 
 import os
 import shutil
+import hashlib
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
@@ -25,6 +26,22 @@ os.makedirs("data", exist_ok=True)
 # Single shared vector store in memory for this demo.
 # In a multi-user production system, this would be per-tenant / per-workspace.
 vector_store = VectorStore()
+
+# Simple in-memory cache: maps a cache key -> the full query response.
+# Avoids calling the LLM again for a question we've already answered,
+# as long as the indexed documents haven't changed since then.
+query_cache: dict[str, dict] = {}
+
+
+def make_cache_key(question: str, top_k: int) -> str:
+    """
+    Builds a cache key from the question, top_k, and how many chunks are
+    currently indexed. Including chunk count means the cache automatically
+    goes stale (a fresh key) whenever new documents are uploaded, so we
+    never serve an answer based on an outdated knowledge base.
+    """
+    raw = f"{question.strip().lower()}|{top_k}|{len(vector_store.chunks)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 # On startup, try to load a previously saved index so uploaded documents
 # aren't lost every time the server restarts (e.g. on Render redeploys).
@@ -63,6 +80,7 @@ async def upload_document(file: UploadFile = File(...)):
 
     vector_store.add_chunks(chunks)
     vector_store.save(INDEX_PATH)  # persist immediately so a restart doesn't lose this document
+    query_cache.clear()  # new document changes what "correct" answers look like, so invalidate cache
 
     return {
         "filename": file.filename,
@@ -73,14 +91,21 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/query")
 def query_documents(request: QueryRequest):
-    """Retrieves relevant chunks for the question and generates a grounded answer."""
+    """Retrieves relevant chunks for the question and generates a grounded answer.
+    Checks an in-memory cache first to avoid redundant LLM calls for repeated
+    questions against the same set of indexed documents."""
     if len(vector_store.chunks) == 0:
         raise HTTPException(status_code=400, detail="No documents indexed yet. Upload a document first.")
+
+    cache_key = make_cache_key(request.question, request.top_k)
+    if cache_key in query_cache:
+        cached_response = query_cache[cache_key]
+        return {**cached_response, "cached": True}
 
     results = vector_store.search(request.question, top_k=request.top_k)
     response = generate_answer(request.question, results)
 
-    return {
+    result = {
         "question": request.question,
         "answer": response["answer"],
         "sources": response["sources"],
@@ -89,3 +114,6 @@ def query_documents(request: QueryRequest):
             for c, score in results
         ],
     }
+
+    query_cache[cache_key] = result  # store for next time
+    return {**result, "cached": False}

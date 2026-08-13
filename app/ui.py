@@ -8,7 +8,7 @@ grounded answer plus which sources/chunks were used.
 import streamlit as st
 import requests
 
-API_URL = "https://enterprise-ai-research-agent-qlpf.onrender.com"  # change this to your deployed backend URL
+API_URL = "http://localhost:8000"  # change this to your deployed backend URL
 
 st.set_page_config(page_title="Enterprise AI Research Agent", page_icon="🔎", layout="wide")
 
@@ -39,11 +39,14 @@ with st.sidebar:
                     st.error("Can't reach the backend. Is the FastAPI server running?")
 
     st.divider()
-    try:
-        health = requests.get(f"{API_URL}/health", timeout=5).json()
-        st.metric("Documents indexed (chunks)", health["documents_indexed"])
-    except requests.exceptions.ConnectionError:
-        st.warning("Backend not running yet.")
+    with st.spinner("Connecting to backend (may take up to a minute on free tier)..."):
+        try:
+            health = requests.get(f"{API_URL}/health", timeout=60).json()
+            st.metric("Documents indexed (chunks)", health["documents_indexed"])
+        except requests.exceptions.ConnectionError:
+            st.warning("Backend not running yet.")
+        except requests.exceptions.Timeout:
+            st.warning("Backend is waking up (Render free tier cold start) — try refreshing in a bit.")
 
 # ---- Main area: ask questions ----
 st.header("💬 Ask a Question")
@@ -62,6 +65,9 @@ if st.button("Ask", type="primary") and question:
 
                 st.subheader("Answer")
                 st.write(result["answer"])
+
+                if result.get("cached"):
+                    st.caption("⚡ Served from cache (no LLM call made)")
 
                 if result["sources"]:
                     st.caption(f"📚 Sources: {', '.join(result['sources'])}")
